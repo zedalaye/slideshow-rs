@@ -1,0 +1,9 @@
+[package]
+name = "slideshow"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+kamadak-exif = "0.6.1"
+rand = "0.9.1"
+raylib = "5.5.1"
