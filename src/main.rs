@@ -6,6 +6,8 @@ use std::io::Cursor; // Needed for reading EXIF from memory buffer
 use std::path::Path;
 use std::process;
 use std::time::Duration;
+use std::process::{Command, Stdio}; // Needed for ffmpeg process
+use std::io::Write; // Needed for writing to ffmpeg stdin
 
 // --- EXIF Reading ---
 // Use kamadak_exif for reading orientation
@@ -13,13 +15,17 @@ use exif::{Reader, Tag, Value, In};
 
 // --- Constants ---
 // MODIFIED: Faster animation
+const RENDER_WIDTH: i32 = 1920; // Width of the render texture
+const RENDER_HEIGHT: i32 = 1080; // Height of the render texture
+const FPS: u32 = 60; // Frames per second
+const FRAME_TIME: f32 = 1.0 / FPS as f32; // Time per frame (seconds)
+
 const ANIMATION_DURATION: f32 = 0.5; // Duration for background animation (seconds)
 const DISPLAY_DURATION: f32 = 2.0;   // Duration each slide is shown prominently (seconds)
 const CLEANUP_INTERVAL: f32 = 0.2;   // Time between background slides disappearing (seconds)
 
 // --- Slideshow State ---
-// MODIFIED: Added Transitioning state
-#[derive(Debug, PartialEq, Clone, Copy)] // Added derive for Debug/Copy
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum SlideshowState {
     Displaying,    // Showing the current slide prominently
     Transitioning, // Current slide is animating to the background
@@ -27,8 +33,7 @@ enum SlideshowState {
     Finished,      // All slides processed
 }
 
-// --- Slide Struct (Modified) ---
-// No changes needed here structurally, but `new` will change
+// --- Slide ---
 struct Slide {
     image: Texture2D,
     visible: bool,
@@ -43,30 +48,27 @@ struct Slide {
     end_rotation: f32,
     animation_timer: f32,
     is_animating: bool,
-    initial_prominent_position: Vector2,
-    initial_prominent_scale: f32,
-    initial_prominent_rotation: f32,
+    // initial_prominent_position: Vector2,
+    // initial_prominent_scale: f32,
+    // initial_prominent_rotation: f32,
 }
 
 impl Slide {
-    // MODIFIED: Accepts Texture2D directly, doesn't load from path anymore
     pub fn new(
         image: Texture2D, // Accept pre-loaded (and potentially rotated) texture
-        screen_width: f32,
-        screen_height: f32,
     ) -> Result<Self, String> {
 
         // --- Initial Prominent State ---
         // Calculate scale based on the *actual* texture dimensions now
         let initial_scale = if image.width() > image.height() {
-            if image.width() as f32 > screen_width * 0.9 {
-                (screen_width * 0.9) / image.width() as f32
+            if image.width() as f32 > RENDER_WIDTH as f32 * 0.9 {
+                (RENDER_WIDTH as f32 * 0.9) / image.width() as f32
             } else {
                 1.0
             }
         } else {
-            if image.height() as f32 > screen_height * 0.9 {
-                (screen_height * 0.9) / image.height() as f32
+            if image.height() as f32 > RENDER_HEIGHT as f32 * 0.9 {
+                (RENDER_HEIGHT as f32 * 0.9) / image.height() as f32
             } else {
                 1.0
             }
@@ -76,7 +78,7 @@ impl Slide {
         let initial_rotation = 0.0; // Rotation from EXIF is baked into the texture
 
         // --- Random Final Background State ---
-        let mut rng = rand::rng(); // Correct way to get thread_rng
+        let mut rng = rand::rng();
         let final_position = Vector2::new(
             rng.random_range(0.05..0.95),
             rng.random_range(0.05..0.95),
@@ -98,13 +100,12 @@ impl Slide {
             end_rotation: final_rotation,
             animation_timer: 0.0,
             is_animating: false,
-            initial_prominent_position: initial_position,
-            initial_prominent_scale: initial_scale,
-            initial_prominent_rotation: initial_rotation,
+            // initial_prominent_position: initial_position,
+            // initial_prominent_scale: initial_scale,
+            // initial_prominent_rotation: initial_rotation,
         })
     }
 
-    // start_background_animation remains the same
     fn start_background_animation(&mut self) {
         if !self.is_animating {
             self.start_position = self.position;
@@ -115,7 +116,6 @@ impl Slide {
         }
     }
 
-    // update remains the same
     fn update(&mut self, dt: f32) {
         if !self.is_animating {
             return;
@@ -137,12 +137,11 @@ impl Slide {
         }
     }
 
-    // draw remains the same
     fn draw(&self, d: &mut RaylibDrawHandle) {
         if self.visible {
-            let screen_width = d.get_screen_width() as f32;
-            let screen_height = d.get_screen_height() as f32;
-            // Use texture dimensions directly
+            let screen_width = RENDER_WIDTH as f32;
+            let screen_height = RENDER_HEIGHT as f32;
+
             let tex_width = self.image.width() as f32;
             let tex_height = self.image.height() as f32;
 
@@ -168,9 +167,8 @@ impl Slide {
     }
 }
 
-// --- Helper: Load and Sort Image Paths (remains the same) ---
+// --- Helper: Load and Sort Image Paths ---
 fn load_sorted_image_paths(dir_path: &str) -> Result<Vec<std::path::PathBuf>, String> {
-    // ... (implementation is the same as before) ...
     let mut paths = Vec::new();
     let entries = fs::read_dir(dir_path)
         .map_err(|e| format!("Failed to read directory {}: {}", dir_path, e))?;
@@ -197,7 +195,7 @@ fn load_sorted_image_paths(dir_path: &str) -> Result<Vec<std::path::PathBuf>, St
     }
 }
 
-// --- NEW Helper: Load Image, Apply EXIF Rotation, Create Texture ---
+// --- Load Image, Apply EXIF Rotation, Create Texture ---
 fn load_texture_with_exif_rotation(
     rl: &mut RaylibHandle,
     thread: &RaylibThread,
@@ -263,13 +261,11 @@ fn load_texture_with_exif_rotation(
         .map_err(|e| format!("Failed to create texture for {:?}: {}", image_path, e))?; // Use map_err
 
     // Unload the Image data from CPU memory (important!)
-    drop(image); // rl.unload_image(image);
+    drop(image);
 
     Ok(texture)
 }
 
-
-// --- Main Function ---
 fn main() {
     // --- Get Directory from Command Line ---
     let args: Vec<String> = env::args().collect(); // Collect args into a vector
@@ -288,18 +284,17 @@ fn main() {
     let image_directory_path = &args[1]; // Borrow the string from the vector
 
     let (mut rl, thread) = raylib::init()
-        .size(1920 / 2, 1080 / 2)
+        .size(RENDER_WIDTH / 2, RENDER_HEIGHT / 2)
         .title("Photo Wall Slideshow")
         .vsync()
         .resizable()
         .build();
-    rl.set_target_fps(60);
+    rl.set_target_fps(FPS);
 
     // --- Load Slides ---
     let image_paths = match load_sorted_image_paths(image_directory_path) {
         Ok(paths) => paths,
         Err(e) => {
-            // Handle error (same as before)
             eprintln!("Error loading images from '{}': {}", image_directory_path, e);
             let mut d = rl.begin_drawing(&thread);
             d.clear_background(Color::BLACK);
@@ -310,16 +305,15 @@ fn main() {
         }
     };
 
-    let mut slides: Vec<Slide> = Vec::new();
-    for path in image_paths.iter() {
-        let sw = rl.get_screen_width() as f32;
-        let sh = rl.get_screen_height() as f32;
+    // keep first 5 images for testing
+    // let image_paths = image_paths.into_iter().take(5).collect::<Vec<_>>();
 
-        // MODIFIED: Use the new loading function
-        match load_texture_with_exif_rotation(&mut rl, &thread, path) {
+    let mut slides: Vec<Slide> = Vec::new();
+    for path in image_paths {
+        match load_texture_with_exif_rotation(&mut rl, &thread, &path) {
             Ok(texture) => {
                 // Now create the Slide with the loaded texture
-                match Slide::new(texture, sw, sh) {
+                match Slide::new(texture) {
                     Ok(slide) => slides.push(slide),
                     Err(e) => eprintln!("Error creating slide object for {:?}: {}", path.file_name().unwrap(), e),
                 }
@@ -332,7 +326,6 @@ fn main() {
     }
 
     if slides.is_empty() {
-        // Handle error (same as before)
         eprintln!("No slides were created successfully.");
         let mut d = rl.begin_drawing(&thread);
         d.clear_background(Color::BLACK);
@@ -342,7 +335,41 @@ fn main() {
         return;
     }
 
+    // Infer output video name from the directory name
+    let video_name = image_directory_path
+        .split('/')
+        .last()
+        .unwrap_or("slideshow")
+        .to_string() + ".mp4";
+    println!("Output video name: {}", video_name);
 
+    // Start ffmpeg process and connect pipes so we can send rendered frames
+    let mut ffmpeg_process = Command::new("ffmpeg")
+        .stdin(Stdio::piped())
+        .arg("-loglevel")
+        .arg("verbose")
+        .arg("-y")
+        .arg("-f")
+        .arg("rawvideo")
+        .arg("-pixel_format")
+        .arg("rgba")
+        .arg("-video_size")
+        .arg(format!("{}x{}", RENDER_WIDTH, RENDER_HEIGHT))
+        .arg("-framerate")
+        .arg(format!("{}", FPS))
+        .arg("-i")
+        .arg("-")
+        .arg("-c:v")
+        .arg("libx264")
+        .arg("-preset")
+        .arg("ultrafast")
+        .arg("-pix_fmt")
+        .arg("yuv420p")
+        .arg(video_name)
+        .spawn()
+        .expect("Failed to start ffmpeg process");
+    let mut ffmpeg_stdin = ffmpeg_process.stdin.take().expect("Failed to open ffmpeg stdin");
+    
     // --- Slideshow State Variables ---
     let mut current_slide_index = 0;
     let mut display_timer = 0.0;
@@ -350,10 +377,14 @@ fn main() {
     let mut cleanup_index = if slides.len() > 0 { slides.len() - 1 } else { 0 };
     let mut slideshow_state = SlideshowState::Displaying;
 
+    let mut framebuffer = rl.load_render_texture(&thread, 1920, 1080)
+        .expect("Failed to create render texture");
+
     // --- Main Loop ---
     while !rl.window_should_close() {
-        let dt = rl.get_frame_time();
-
+        // let dt = rl.get_frame_time(); // realtime rendering
+        let dt = FRAME_TIME;
+    
         // --- Update Logic ---
 
         // 1. Update all individual slide animations
@@ -361,7 +392,7 @@ fn main() {
             slide.update(dt);
         }
 
-        // 2. Update slideshow state machine (MODIFIED)
+        // 2. Update slideshow state machine
         match slideshow_state {
             SlideshowState::Displaying => {
                 display_timer += dt;
@@ -412,7 +443,6 @@ fn main() {
                         slides[0].visible = false;
                     }
 
-
                     if cleanup_index > 0 {
                         cleanup_index -= 1;
                         cleanup_timer = 0.0;
@@ -423,47 +453,93 @@ fn main() {
                 }
             }
             SlideshowState::Finished => {
-                if rl.is_key_pressed(raylib::consts::KeyboardKey::KEY_R) {
-                    println!("Restarting slideshow");
-                    // Reset state variables
-                    current_slide_index = 0;
-                    display_timer = 0.0;
-                    cleanup_timer = 0.0;
-                    cleanup_index = if slides.len() > 0 { slides.len() - 1 } else { 0 };
-                    // Reset all slides
-                    for slide in slides.iter_mut() {
-                        slide.visible = true;
-                        slide.is_animating = false;
-                        slide.position = slide.initial_prominent_position;
-                        slide.scale = slide.initial_prominent_scale;
-                        slide.rotation = slide.initial_prominent_rotation;
-                        slide.animation_timer = 0.0;
-                    }
-                    slideshow_state = SlideshowState::Displaying; // Start over
+                // Slideshow rendering is done. Close stdin pipe and wait for ffmpeg to finish
+                drop(ffmpeg_stdin);
+                ffmpeg_process.wait().expect("Failed to wait for ffmpeg process");
+                
+                break;
+
+                // if rl.is_key_pressed(raylib::consts::KeyboardKey::KEY_R) {
+                //     println!("Restarting slideshow");
+                //     // Reset state variables
+                //     current_slide_index = 0;
+                //     display_timer = 0.0;
+                //     cleanup_timer = 0.0;
+                //     cleanup_index = if slides.len() > 0 { slides.len() - 1 } else { 0 };
+                //     // Reset all slides
+                //     for slide in slides.iter_mut() {
+                //         slide.visible = true;
+                //         slide.is_animating = false;
+                //         slide.position = slide.initial_prominent_position;
+                //         slide.scale = slide.initial_prominent_scale;
+                //         slide.rotation = slide.initial_prominent_rotation;
+                //         slide.animation_timer = 0.0;
+                //     }
+                //     slideshow_state = SlideshowState::Displaying; // Start over
+                // }
+            }
+        }
+
+        // --- Render each frame into fixed size "framebuffer" ---
+    
+        rl.draw_texture_mode(&thread, &mut framebuffer,  |mut tmd| {
+            let mut d = tmd.begin_drawing(&thread);
+            d.clear_background(Color::BLACK);
+
+            // CORRECTED Drawing Logic: Draw background slides and the current active slide
+            for (i, slide) in slides.iter().enumerate() {
+                // Draw if it's a background slide (index less than current)
+                // OR if it's the current slide being displayed or transitioning.
+                // The Cleanup/Finished states are implicitly handled because
+                // background slides (i < current_slide_index) will be drawn,
+                // and slide.draw() checks the slide.visible flag.
+                if i < current_slide_index ||
+                    (i == current_slide_index && (slideshow_state == SlideshowState::Displaying || slideshow_state == SlideshowState::Transitioning))
+                {
+                    // The slide.draw() method internally checks for slide.visible,
+                    // which handles the cleanup phase correctly.
+                    slide.draw(&mut d);
                 }
+                // Slides with index > current_slide_index are not drawn yet.
+            }
+        });
+
+        // Draw inverted copy of framebuffer to the screen for feedback
+
+        let mut d2 = rl.begin_drawing(&thread);
+        
+        let sw = d2.get_screen_width() as f32;
+        let sh = d2.get_screen_height() as f32;
+
+        d2.draw_texture_pro(
+            &framebuffer,
+            Rectangle::new(0.0, 0.0, framebuffer.width() as f32, -(framebuffer.height() as f32)),
+            Rectangle::new(0.0, 0.0, sw, sh),
+            Vector2::new(0.0, 0.0),
+            0.0,
+            Color::WHITE
+        );
+
+        // Grab rendered texture pixels as an Image
+        let image = &framebuffer.load_image().expect("Failed to load image from framebuffer");
+
+        unsafe {
+            let image_ptr = image.data() as *const u8;
+            let image_len = (image.width() * image.height() * 4) as usize; // 4 bytes per pixel (RGBA)
+            let image_slice = std::slice::from_raw_parts(image_ptr, image_len);
+
+            // Write the image data flipped vertically to ffmpeg stdin
+            // This is necessary because ffmpeg expects the image data in a specific order
+            // (top to bottom), while raylib provides it in bottom to top order.
+
+            for y in 0..image.height() {
+                let row_start = (image.height() - 1 - y) * image.width() * 4;
+                let row_end = row_start + image.width() * 4;
+                let row_slice = &image_slice[row_start as usize..row_end as usize];
+                ffmpeg_stdin.write_all(row_slice).expect("Failed to write to ffmpeg stdin");
             }
         }
 
-        // --- Drawing ---
-        let mut d = rl.begin_drawing(&thread);
-        d.clear_background(Color::BLACK);
-
-        // CORRECTED Drawing Logic: Draw background slides and the current active slide
-        for (i, slide) in slides.iter().enumerate() {
-            // Draw if it's a background slide (index less than current)
-            // OR if it's the current slide being displayed or transitioning.
-            // The Cleanup/Finished states are implicitly handled because
-            // background slides (i < current_slide_index) will be drawn,
-            // and slide.draw() checks the slide.visible flag.
-            if i < current_slide_index ||
-                (i == current_slide_index && (slideshow_state == SlideshowState::Displaying || slideshow_state == SlideshowState::Transitioning))
-            {
-                // The slide.draw() method internally checks for slide.visible,
-                // which handles the cleanup phase correctly.
-                slide.draw(&mut d);
-            }
-            // Slides with index > current_slide_index are not drawn yet.
-        }
 
         // --- Optional Debug Info ---
         // let state_text = format!("State: {:?}", slideshow_state);
@@ -472,9 +548,9 @@ fn main() {
         // d.draw_text(&state_text, 10, 10, 20, Color::WHITE);
         // d.draw_text(&current_text, 10, 30, 20, Color::WHITE);
         // d.draw_text(&anim_text, 10, 50, 20, Color::WHITE);
-        if slideshow_state == SlideshowState::Finished {
-            d.draw_text("Slideshow Finished. Press 'R' to restart.", 10, 10, 20, Color::LIME);
-        }
+        // if slideshow_state == SlideshowState::Finished {
+        //     d.draw_text("Slideshow Finished. Press 'R' to restart.", 10, 10, 20, Color::LIME);
+        // }
 
     } // End main loop
 } // End main
