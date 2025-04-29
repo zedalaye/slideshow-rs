@@ -1,4 +1,5 @@
 use std::env;
+use std::path::Path;
 use std::process;
 use std::time::Duration;
 use raylib::prelude::*;
@@ -30,7 +31,9 @@ fn main() {
     }
 
     // The directory path is the second argument (index 1)
-    let image_directory_path = &args[1]; // Borrow the string from the vector
+    let image_directory_path = Path::new(&args[1]); // Borrow the string from the vector
+    let video_name = image_directory_path.file_name().unwrap().to_str().unwrap().to_string() + ".mp4";
+    println!("Input path: {}\nOutput video name: {}", image_directory_path.to_str().unwrap(), video_name);
 
     let (mut rl, thread) = raylib::init()
         .size(RENDER_WIDTH / 2, RENDER_HEIGHT / 2)
@@ -41,10 +44,10 @@ fn main() {
     rl.set_target_fps(FPS);
 
     // --- Load Slides ---
-    let image_paths = match load_sorted_image_paths(image_directory_path) {
+    let image_paths = match load_sorted_image_paths(image_directory_path.to_str().unwrap()) {
         Ok(paths) => paths,
         Err(e) => {
-            eprintln!("Error loading images from '{}': {}", image_directory_path, e);
+            eprintln!("Error loading images from '{}': {}", image_directory_path.to_str().unwrap(), e);
             let mut d = rl.begin_drawing(&thread);
             d.clear_background(Color::BLACK);
             d.draw_text(&format!("Error: {}", e), 20, 20, 20, Color::RED);
@@ -84,13 +87,6 @@ fn main() {
         return;
     }
 
-    // Infer output video name from the directory name
-    let video_name = image_directory_path
-        .split('/')
-        .last()
-        .unwrap_or("slideshow")
-        .to_string() + ".mp4";
-    println!("Output video name: {}", video_name);
 
     // Start ffmpeg process and connect pipes so we can send rendered frames
     let mut ffmpeg = Ffmpeg::new(RENDER_WIDTH, RENDER_HEIGHT, FPS, &video_name);
