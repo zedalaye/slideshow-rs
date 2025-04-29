@@ -42,6 +42,7 @@ fn main() {
         .resizable()
         .build();
     rl.set_target_fps(FPS);
+    rl.set_trace_log(TraceLogLevel::LOG_ERROR);
 
     // --- Load Slides ---
     let image_paths = match load_sorted_image_paths(image_directory_path.to_str().unwrap()) {
