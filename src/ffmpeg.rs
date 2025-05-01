@@ -10,29 +10,20 @@ pub struct Ffmpeg {
 impl Ffmpeg {
     pub fn new(width: i32, height: i32, fps: u32, video_name: &str) -> Ffmpeg {
         let mut process = Command::new("ffmpeg")
-                            .stdin(Stdio::piped())
-                            .arg("-loglevel")
-                            .arg("verbose")
-                            .arg("-y")
-                            .arg("-f")
-                            .arg("rawvideo")
-                            .arg("-pixel_format")
-                            .arg("rgba")
-                            .arg("-video_size")
-                            .arg(format!("{}x{}", width, height))
-                            .arg("-framerate")
-                            .arg(format!("{}", fps))
-                            .arg("-i")
-                            .arg("-")
-                            .arg("-c:v")
-                            .arg("libx264")
-                            // .arg("-preset")
-                            // .arg("ultrafast")
-                            .arg("-pix_fmt")
-                            .arg("yuv420p")
-                            .arg(video_name)
-                            .spawn()
-                            .expect("Failed to start ffmpeg process");
+            .stdin(Stdio::piped())
+            .args(["-loglevel", "verbose"])
+            .arg("-y")
+            .args(["-f", "rawvideo"])
+            .args(["-pixel_format", "rgba"])
+            .args(["-video_size", &format!("{}x{}", width, height)])
+            .args(["-framerate", &format!("{}", fps)])
+            .args(["-i", "-"])
+            .args(["-c:v", "libx264"])
+            // .args(["-preset", "ultrafast"])
+            .args(["-pix_fmt", "yuv420p"])
+            .arg(video_name)
+            .spawn()
+            .expect("Failed to start ffmpeg process");
         let stdin = process.stdin.take().expect("Failed to open ffmpeg stdin");
         Ffmpeg { process, stdin: Some(stdin) }
     }
