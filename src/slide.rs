@@ -1,4 +1,3 @@
-use rand::Rng;
 use raylib::prelude::*;
 use crate::constants::*;
 
@@ -35,6 +34,9 @@ pub struct Slide {
 impl Slide {
     pub fn new(
         image: Texture2D, // Accept pre-loaded (and potentially rotated) texture
+        final_position: Vector2,
+        final_scale: f32,
+        final_rotation: f32,
     ) -> Result<Self, String> {
 
         // --- Initial Prominent State ---
@@ -55,15 +57,6 @@ impl Slide {
 
         let initial_position = Vector2::new(0.5, 0.5); // Centered
         let initial_rotation = 0.0; // Rotation from EXIF is baked into the texture
-
-        // --- Random Final Background State ---
-        let mut rng = rand::rng();
-        let final_position = Vector2::new(
-            rng.random_range(0.05..0.95),
-            rng.random_range(0.05..0.95),
-        );
-        let final_scale = initial_scale * rng.random_range(0.20..0.30);
-        let final_rotation = rng.random_range(-15.0..15.0);
 
         Ok(Self {
             image, // Use the passed texture
