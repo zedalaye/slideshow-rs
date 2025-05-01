@@ -25,6 +25,11 @@ pub struct Slide {
     // initial_prominent_position: Vector2,
     // initial_prominent_scale: f32,
     // initial_prominent_rotation: f32,
+
+    tween_position_x: ease::Tween,
+    tween_position_y: ease::Tween,
+    tween_scale: ease::Tween,
+    tween_rotation: ease::Tween,
 }
 
 impl Slide {
@@ -63,20 +68,30 @@ impl Slide {
         Ok(Self {
             image, // Use the passed texture
             visible: true,
-            position: initial_position,
-            scale: initial_scale,
-            rotation: initial_rotation,
+
+            position:       initial_position,
+            scale:          initial_scale,
+            rotation:       initial_rotation,
+
             start_position: initial_position,
-            start_scale: initial_scale,
+            start_scale:    initial_scale,
             start_rotation: initial_rotation,
-            end_position: final_position,
-            end_scale: final_scale,
-            end_rotation: final_rotation,
+            
+            end_position:   final_position,
+            end_scale:      final_scale,
+            end_rotation:   final_rotation,
+            
             animation_timer: 0.0,
-            is_animating: false,
+            is_animating:    false,
+
             // initial_prominent_position: initial_position,
             // initial_prominent_scale: initial_scale,
             // initial_prominent_rotation: initial_rotation,
+            
+            tween_position_x: ease::Tween::new(ease::cubic_out, initial_position.x, final_position.x, ANIMATION_DURATION),
+            tween_position_y: ease::Tween::new(ease::cubic_out, initial_position.y, final_position.y, ANIMATION_DURATION),
+            tween_scale:      ease::Tween::new(ease::back_in, initial_scale, final_scale, ANIMATION_DURATION),
+            tween_rotation:   ease::Tween::new(ease::sine_in_out, initial_rotation, final_rotation, ANIMATION_DURATION),
         })
     }
 
@@ -94,20 +109,18 @@ impl Slide {
         if !self.is_animating {
             return;
         }
+
+        self.position.x = self.tween_position_x.apply(dt);
+        self.position.y = self.tween_position_y.apply(dt);
+        self.scale      = self.tween_scale.apply(dt);
+        self.rotation   = self.tween_rotation.apply(dt);
+        
         self.animation_timer += dt;
-        let t = (self.animation_timer / ANIMATION_DURATION).min(1.0);
-        // Optional Easing:
-        // let t = 1.0 - (1.0 - t).powi(3); // easeOutCubic
-
-        self.position = self.start_position.lerp(self.end_position, t);
-        self.scale = raylib::core::math::lerp(self.start_scale, self.end_scale, t);
-        self.rotation = raylib::core::math::lerp(self.start_rotation, self.end_rotation, t);
-
         if self.animation_timer >= ANIMATION_DURATION {
             self.is_animating = false;
-            self.position = self.end_position;
-            self.scale = self.end_scale;
-            self.rotation = self.end_rotation;
+            self.position     = self.end_position;
+            self.scale        = self.end_scale;
+            self.rotation     = self.end_rotation;
         }
     }
 
