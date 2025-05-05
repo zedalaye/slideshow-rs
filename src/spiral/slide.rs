@@ -2,7 +2,7 @@ use raylib::prelude::*;
 use crate::constants::*;
 
 pub struct Slide {
-    image: Texture2D,
+    pub image: Texture2D,
 
     pub visible: bool,
 
@@ -20,44 +20,20 @@ pub struct Slide {
     
     animation_timer: f32,
     pub is_animating: bool,
-    
-    // initial_prominent_position: Vector2,
-    // initial_prominent_scale: f32,
-    // initial_prominent_rotation: f32,
 
-    tween_position_x: ease::Tween,
-    tween_position_y: ease::Tween,
-    tween_scale: ease::Tween,
-    tween_rotation: ease::Tween,
+    tween_position_x: Option<ease::Tween>,
+    tween_position_y: Option<ease::Tween>,
+    tween_scale: Option<ease::Tween>,
+    tween_rotation: Option<ease::Tween>,
 }
 
 impl Slide {
     pub fn new(
         image: Texture2D, // Accept pre-loaded (and potentially rotated) texture
-        final_position: Vector2,
-        final_scale: f32,
-        final_rotation: f32,
+        initial_position: Vector2,
+        initial_scale: f32,
+        initial_rotation: f32   
     ) -> Result<Self, String> {
-
-        // --- Initial Prominent State ---
-        // Calculate scale based on the *actual* texture dimensions now
-        let initial_scale = if image.width() > image.height() {
-            if image.width() as f32 > RENDER_WIDTH as f32 * 0.9 {
-                (RENDER_WIDTH as f32 * 0.9) / image.width() as f32
-            } else {
-                1.0
-            }
-        } else {
-            if image.height() as f32 > RENDER_HEIGHT as f32 * 0.9 {
-                (RENDER_HEIGHT as f32 * 0.9) / image.height() as f32
-            } else {
-                1.0
-            }
-        };
-
-        let initial_position = Vector2::new(0.5, 0.5); // Centered
-        let initial_rotation = 0.0; // Rotation from EXIF is baked into the texture
-
         Ok(Self {
             image, // Use the passed texture
             visible: true,
@@ -70,22 +46,29 @@ impl Slide {
             start_scale:    initial_scale,
             start_rotation: initial_rotation,
             
-            end_position:   final_position,
-            end_scale:      final_scale,
-            end_rotation:   final_rotation,
+            end_position:   Vector2::new(0.0, 0.0),
+            end_scale:      0.0,
+            end_rotation:   0.0,
             
             animation_timer: 0.0,
             is_animating:    false,
 
-            // initial_prominent_position: initial_position,
-            // initial_prominent_scale: initial_scale,
-            // initial_prominent_rotation: initial_rotation,
-            
-            tween_position_x: ease::Tween::new(ease::cubic_out, initial_position.x, final_position.x, ANIMATION_DURATION),
-            tween_position_y: ease::Tween::new(ease::cubic_out, initial_position.y, final_position.y, ANIMATION_DURATION),
-            tween_scale:      ease::Tween::new(ease::back_in, initial_scale, final_scale, ANIMATION_DURATION),
-            tween_rotation:   ease::Tween::new(ease::sine_in_out, initial_rotation, final_rotation, ANIMATION_DURATION),
+            tween_position_x: None,
+            tween_position_y: None,
+            tween_scale:      None,
+            tween_rotation:   None,
         })
+    }
+
+    pub fn set_final_position(&mut self, final_position: Vector2, final_scale: f32, final_rotation: f32) {
+        self.end_position = final_position;
+        self.end_scale = final_scale;
+        self.end_rotation = final_rotation;
+        
+        self.tween_position_x = Some(ease::Tween::new(ease::cubic_out, self.start_position.x, final_position.x, ANIMATION_DURATION));
+        self.tween_position_y = Some(ease::Tween::new(ease::cubic_out, self.start_position.y, final_position.y, ANIMATION_DURATION));
+        self.tween_scale      = Some(ease::Tween::new(ease::back_in, self.start_scale, final_scale, ANIMATION_DURATION));
+        self.tween_rotation   = Some(ease::Tween::new(ease::sine_in_out, self.start_rotation, final_rotation, ANIMATION_DURATION));
     }
 
     pub fn start_background_animation(&mut self) {
@@ -103,10 +86,10 @@ impl Slide {
             return;
         }
 
-        self.position.x = self.tween_position_x.apply(dt);
-        self.position.y = self.tween_position_y.apply(dt);
-        self.scale      = self.tween_scale.apply(dt);
-        self.rotation   = self.tween_rotation.apply(dt);
+        self.position.x = self.tween_position_x.as_mut().expect("Tween should be initialized").apply(dt);
+        self.position.y = self.tween_position_y.as_mut().expect("Tween should be initialized").apply(dt);
+        self.scale      = self.tween_scale.as_mut().expect("Tween should be initialized").apply(dt);
+        self.rotation   = self.tween_rotation.as_mut().expect("Tween should be initialized").apply(dt);
         
         self.animation_timer += dt;
         if self.animation_timer >= ANIMATION_DURATION {

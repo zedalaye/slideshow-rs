@@ -2,20 +2,28 @@ use std::env;
 use std::path::Path;
 use std::process;
 use std::time::Duration;
-use rand::Rng;
 use raylib::prelude::*;
 
 mod constants;
-mod state;
-mod slide;
 mod texture_loader;
 mod ffmpeg;
+mod engine;
+mod spiral;
 
 use crate::constants::*;
-use crate::state::SlideshowState;
-use crate::slide::Slide;
-use crate::texture_loader::{load_sorted_image_paths, load_texture_with_exif_rotation};
-use crate::ffmpeg::Ffmpeg;
+use crate::texture_loader::*;
+use crate::ffmpeg::*;
+use crate::engine::Engine;
+use crate::spiral::engine::SpiralEngine;
+
+fn display_error(rl: &mut RaylibHandle, thread: &RaylibThread, error: &str) {
+    eprintln!("{}", error);
+    let mut d = rl.begin_drawing(&thread);
+    d.clear_background(Color::BLACK);
+    d.draw_text(error, 20, 20, 20, Color::RED);
+    drop(d);
+    std::thread::sleep(Duration::from_secs(5));
+}
 
 fn main() {
     // --- Get Directory from Command Line ---
@@ -45,16 +53,14 @@ fn main() {
     rl.set_target_fps(FPS);
     rl.set_trace_log(TraceLogLevel::LOG_ERROR);
 
+    let mut framebuffer = rl.load_render_texture(&thread, RENDER_WIDTH as u32, RENDER_HEIGHT as u32)
+        .expect("Failed to create render frame buffer");
+
     // --- Load Slides ---
     let image_paths = match load_sorted_image_paths(image_directory_path.to_str().unwrap()) {
         Ok(paths) => paths,
         Err(e) => {
-            eprintln!("Error loading images from '{}': {}", image_directory_path.to_str().unwrap(), e);
-            let mut d = rl.begin_drawing(&thread);
-            d.clear_background(Color::BLACK);
-            d.draw_text(&format!("Error: {}", e), 20, 20, 20, Color::RED);
-            drop(d);
-            std::thread::sleep(Duration::from_secs(5));
+            display_error(&mut rl, &thread, &format!("Error loading images from '{}': {}", image_directory_path.to_str().unwrap(), e));
             return;
         }
     };
@@ -62,281 +68,33 @@ fn main() {
     // keep first 5 images for testing
     // let image_paths = image_paths.into_iter().take(5).collect::<Vec<_>>();
 
-    // Compute grid dimensions based on images count
-    // n * (n / display ratio) = images count
-
-    let images_count = image_paths.len();
-    let display_ratio = RENDER_WIDTH as f32 / RENDER_HEIGHT as f32;
-
-    println!("Found {} images", images_count);
-
-    let grid_height = (images_count as f32 / display_ratio).sqrt().ceil() as i32;
-    let grid_width = (images_count as f32 / grid_height as f32).ceil() as i32;
-
-    println!("Grid dimensions: {}x{}", grid_width, grid_height);
-
-    let target_width = (RENDER_WIDTH as f32 / grid_width as f32) * 1.5;
-    println!("Target size: {}", target_width);
+    let mut engine = SpiralEngine::new();
     
-    let grid_step_x = 1.0 / grid_width as f32;
-    let grid_step_y = 1.0 / grid_height as f32;
-
-    println!("Grid step: {}x{}", grid_step_x, grid_step_y);
-
-    // offset to the center of a cell
-    let grid_offset_x = grid_step_x * 0.5;
-    let grid_offset_y = grid_step_y * 0.5;
-
-    println!("Grid offset: {}x{}", grid_offset_x, grid_offset_y);
-
-    let mut line = 0;
-    let mut column = 0;
-    let mut line_low_bound = 0;
-    let mut line_high_bound = grid_height -1;
-    let mut column_low_bound = 0;
-    let mut column_high_bound = grid_width -1;
-    let mut direction = 0; // 0: right, 1: down, 2: left, 3: up
-
-    let mut rng = rand::rng();
-
-    let mut slides: Vec<Slide> = Vec::new();
-    for path in image_paths {
-        match load_texture_with_exif_rotation(&mut rl, &thread, &path) {
-            Ok(image) => {
-                match direction {
-                    0 => {
-                        // Going right, reach the end of the row
-                        if column > column_high_bound {
-                            direction = 1; // go down
-                            line_low_bound += 1; // skip the processed line
-                            line = line_low_bound;
-                            column = column_high_bound;
-                        }
-                    }
-                    1 => {
-                        // Going down, reach the end of the column
-                        if line > line_high_bound {
-                            direction = 2; // go left
-                            column_high_bound -= 1; // skip the processed column
-                            column = column_high_bound;
-                            line = line_high_bound;
-                        }
-                    }
-                    2 => {
-                        // Going left, reach the start of the row
-                        if column < column_low_bound {
-                            direction = 3; // go up
-                            line_high_bound -= 1; // skip the processed line
-                            line = line_high_bound;
-                            column = column_low_bound;
-                        }
-                    }
-                    3 => {
-                        // Going up, reach the start of the column
-                        if line < line_low_bound {
-                            direction = 0; // go right
-                            column_low_bound += 1; // skip the processed column
-                            column = column_low_bound;
-                            line = line_low_bound;
-                        }
-                    }
-                    _ => {}
-                }
-
-                // Décalage aléatoire de +/- 1% de la position finale par rapport à la trajectoire de la spirale
-                let end_pos_offset = Vector2::new(
-                    rng.random_range(-0.01..0.01),
-                    rng.random_range(-0.01..0.01)
-                );
-
-                // Calcule la position finale
-                let final_position = Vector2::new(
-                    grid_offset_x + column as f32 * grid_step_x + end_pos_offset.x,
-                    grid_offset_y + line   as f32 * grid_step_y + end_pos_offset.y
-                );
-
-                // Compute final_scale so that the image is between 190px and 210px
-                let image_ref_dimension = image.width().max(image.height());
-                let final_scale = target_width / image_ref_dimension as f32 * (1.0 + rng.random_range(-0.05..0.05));
-         
-                let final_rotation = rng.random_range(-15.0..15.0);
-
-                // Now create the Slide with the loaded texture
-                match Slide::new(image, final_position, final_scale, final_rotation) {
-                    Ok(slide) => slides.push(slide),
-                    Err(e) => eprintln!("Error creating slide object for {:?}: {}", path.file_name().unwrap(), e),
-                }
-
-                // Update grid position based on direction
-                match direction {
-                    0 => column += 1, // Right
-                    1 => line   += 1, // Down
-                    2 => column -= 1, // Left
-                    3 => line   -= 1, // Up
-                    _ => {}
-                }
-            }
-            Err(e) => {
-                eprintln!("Error processing image {:?}: {}", path.file_name().unwrap(), e);
-                // Optionally skip this image or handle error
-            }
-        }
-    }
-
-    if slides.is_empty() {
-        eprintln!("No slides were created successfully.");
-        let mut d = rl.begin_drawing(&thread);
-        d.clear_background(Color::BLACK);
-        d.draw_text("Error: No slides loaded.", 20, 20, 20, Color::RED);
-        drop(d);
-        std::thread::sleep(Duration::from_secs(5));
+    if !engine.initialize(&mut rl, &thread, image_paths) {
+        display_error(&mut rl, &thread, "No slides were created successfully.");
         return;
     }
 
-
-    // Start ffmpeg process and connect pipes so we can send rendered frames
     let mut ffmpeg = Ffmpeg::new(RENDER_WIDTH, RENDER_HEIGHT, FPS, &video_name);
-    
-    // --- Slideshow State Variables ---
-    let mut current_slide_index = 0;
-    let mut display_timer = 0.0;
-    let mut cleanup_timer = 0.0;
-    let mut cleanup_index = if slides.len() > 0 { slides.len() - 1 } else { 0 };
-    let mut slideshow_state = SlideshowState::Displaying;
-
-    let mut framebuffer = rl.load_render_texture(&thread, 1920, 1080)
-        .expect("Failed to create render texture");
 
     // --- Main Loop ---
     while !rl.window_should_close() {
         // let dt = rl.get_frame_time(); // realtime rendering
         let dt = FRAME_TIME;
-    
-        // --- Update Logic ---
 
-        // 1. Update all individual slide animations
-        for slide in slides.iter_mut() {
-            slide.update(dt);
+        if !engine.render_frame(dt, &mut rl, &thread, &mut framebuffer) {
+            drop(ffmpeg);
+            break;
         }
-
-        // 2. Update slideshow state machine
-        match slideshow_state {
-            SlideshowState::Displaying => {
-                display_timer += dt;
-                if display_timer >= DISPLAY_DURATION {
-                    // Time to start transition
-                    if current_slide_index < slides.len() {
-                        // Start the current slide's background animation
-                        slides[current_slide_index].start_background_animation();
-                        // Change state to wait for animation to finish
-                        slideshow_state = SlideshowState::Transitioning;
-                        // DO NOT increment index or reset timer here yet
-                    } else {
-                        // Should not happen if logic is correct, but safety first
-                        slideshow_state = SlideshowState::Cleanup;
-                        cleanup_timer = 0.0;
-                    }
-                }
-            }
-            SlideshowState::Transitioning => {
-                // Check if the *current* slide (which is animating) has finished
-                if current_slide_index < slides.len() && !slides[current_slide_index].is_animating {
-                    // Animation finished, move to the next slide
-                    current_slide_index += 1;
-
-                    // Check if that was the last slide
-                    if current_slide_index >= slides.len() {
-                        slideshow_state = SlideshowState::Cleanup;
-                        // Setup cleanup index (points to the last slide that animated)
-                        cleanup_index = current_slide_index -1; // Correct index
-                        cleanup_timer = 0.0;
-                    } else {
-                        // More slides remain, go back to displaying the new current slide
-                        slideshow_state = SlideshowState::Displaying;
-                        display_timer = 0.0; // Reset display timer for the new slide
-                    }
-                }
-                // Else: Still animating, do nothing, stay in Transitioning state
-            }
-            SlideshowState::Cleanup => {
-                cleanup_timer += dt;
-                if cleanup_timer >= CLEANUP_INTERVAL {
-                    // Hide the slide at cleanup_index
-                    // Check bounds just in case cleanup_index became invalid somehow
-                    if let Some(slide) = slides.get_mut(cleanup_index) {
-                        slide.visible = false;
-                    } else if cleanup_index == 0 && slides.len() == 1 {
-                        // Handle edge case: only one slide, hide it
-                        slides[0].visible = false;
-                    }
-
-                    if cleanup_index > 0 {
-                        cleanup_index -= 1;
-                        cleanup_timer = 0.0;
-                    } else {
-                        // Finished hiding slide 0
-                        slideshow_state = SlideshowState::Finished;
-                    }
-                }
-            }
-            SlideshowState::Finished => {
-                // Slideshow rendering is done. Close stdin pipe and wait for ffmpeg to finish
-                drop(ffmpeg);
-                break;
-
-                // if rl.is_key_pressed(raylib::consts::KeyboardKey::KEY_R) {
-                //     println!("Restarting slideshow");
-                //     // Reset state variables
-                //     current_slide_index = 0;
-                //     display_timer = 0.0;
-                //     cleanup_timer = 0.0;
-                //     cleanup_index = if slides.len() > 0 { slides.len() - 1 } else { 0 };
-                //     // Reset all slides
-                //     for slide in slides.iter_mut() {
-                //         slide.visible = true;
-                //         slide.is_animating = false;
-                //         slide.position = slide.initial_prominent_position;
-                //         slide.scale = slide.initial_prominent_scale;
-                //         slide.rotation = slide.initial_prominent_rotation;
-                //         slide.animation_timer = 0.0;
-                //     }
-                //     slideshow_state = SlideshowState::Displaying; // Start over
-                // }
-            }
-        }
-
-        // --- Render each frame into fixed size "framebuffer" ---
-    
-        rl.draw_texture_mode(&thread, &mut framebuffer,  |mut tmd| {
-            let mut d = tmd.begin_drawing(&thread);
-            d.clear_background(Color::BLACK);
-
-            // CORRECTED Drawing Logic: Draw background slides and the current active slide
-            for (i, slide) in slides.iter().enumerate() {
-                // Draw if it's a background slide (index less than current)
-                // OR if it's the current slide being displayed or transitioning.
-                // The Cleanup/Finished states are implicitly handled because
-                // background slides (i < current_slide_index) will be drawn,
-                // and slide.draw() checks the slide.visible flag.
-                if i < current_slide_index ||
-                    (i == current_slide_index && (slideshow_state == SlideshowState::Displaying || slideshow_state == SlideshowState::Transitioning))
-                {
-                    // The slide.draw() method internally checks for slide.visible,
-                    // which handles the cleanup phase correctly.
-                    slide.draw(&mut d);
-                }
-                // Slides with index > current_slide_index are not drawn yet.
-            }
-        });
 
         // Draw inverted copy of framebuffer to the screen for feedback
 
-        let mut d2 = rl.begin_drawing(&thread);
+        let mut d = rl.begin_drawing(&thread);
         
-        let sw = d2.get_screen_width() as f32;
-        let sh = d2.get_screen_height() as f32;
+        let sw = d.get_screen_width() as f32;
+        let sh = d.get_screen_height() as f32;
 
-        d2.draw_texture_pro(
+        d.draw_texture_pro(
             &framebuffer,
             Rectangle::new(0.0, 0.0, framebuffer.width() as f32, -(framebuffer.height() as f32)),
             Rectangle::new(0.0, 0.0, sw, sh),
@@ -348,18 +106,7 @@ fn main() {
         // Grab rendered texture pixels as an Image
         let image = &framebuffer.load_image().expect("Failed to load image from framebuffer");
 
+        // Write the image to the ffmpeg pipe
         ffmpeg.write(&image);
-
-        // --- Optional Debug Info ---
-        // let state_text = format!("State: {:?}", slideshow_state);
-        // let current_text = format!("Current Idx: {}", current_slide_index);
-        // let anim_text = if current_slide_index < slides.len() { format!("Animating: {}", slides[current_slide_index].is_animating) } else { "".to_string() };
-        // d.draw_text(&state_text, 10, 10, 20, Color::WHITE);
-        // d.draw_text(&current_text, 10, 30, 20, Color::WHITE);
-        // d.draw_text(&anim_text, 10, 50, 20, Color::WHITE);
-        // if slideshow_state == SlideshowState::Finished {
-        //     d.draw_text("Slideshow Finished. Press 'R' to restart.", 10, 10, 20, Color::LIME);
-        // }
-
     } // End main loop
 } // End main
