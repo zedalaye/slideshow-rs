@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+clap = { version = "4.5.37", features = ["derive"] }
 kamadak-exif = "0.6.1"
 rand = "0.9.1"
 raylib = "5.5.1"

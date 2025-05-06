@@ -1,8 +1,7 @@
-use std::env;
 use std::path::Path;
-use std::process;
 use std::time::Duration;
 use raylib::prelude::*;
+use clap::Parser;
 
 mod constants;
 mod texture_loader;
@@ -25,22 +24,22 @@ fn display_error(rl: &mut RaylibHandle, thread: &RaylibThread, error: &str) {
     std::thread::sleep(Duration::from_secs(5));
 }
 
+#[derive(Debug, Parser)]
+#[command(version, about, long_about = None)]
+pub struct App {
+    #[arg(short, long, help = "Engine to use (spiral or push-box)")]
+    engine: String,
+    
+    #[arg(short, long, help = "Directory containing images")]
+    directory: String,
+}
+
 fn main() {
     // --- Get Directory from Command Line ---
-    let args: Vec<String> = env::args().collect(); // Collect args into a vector
-
-    // Check if the directory argument was provided
-    if args.len() < 2 {
-        // Print usage message to standard error
-        eprintln!(
-            "Usage: {} <image_directory>",
-            args.get(0).map_or("slideshow", |s| s.as_str()) // Try to get program name, default to "slideshow"
-        );
-        process::exit(1); // Exit with a non-zero code to indicate error
-    }
+    let args = App::parse();
 
     // The directory path is the second argument (index 1)
-    let image_directory_path = Path::new(&args[1]); // Borrow the string from the vector
+    let image_directory_path = Path::new(&args.directory); // Borrow the string from the vector
     let video_name = image_directory_path.file_name().unwrap().to_str().unwrap().to_string() + ".mp4";
     println!("Input path: {}\nOutput video name: {}", image_directory_path.to_str().unwrap(), video_name);
 
