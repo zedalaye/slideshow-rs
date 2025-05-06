@@ -7,13 +7,17 @@ mod constants;
 mod texture_loader;
 mod ffmpeg;
 mod engine;
+
 mod spiral;
+mod push_box;
 
 use crate::constants::*;
 use crate::texture_loader::*;
 use crate::ffmpeg::*;
 use crate::engine::Engine;
+
 use crate::spiral::engine::SpiralEngine;
+use crate::push_box::engine::PushBoxEngine;
 
 fn display_error(rl: &mut RaylibHandle, thread: &RaylibThread, error: &str) {
     eprintln!("{}", error);
@@ -67,7 +71,14 @@ fn main() {
     // keep first 5 images for testing
     // let image_paths = image_paths.into_iter().take(5).collect::<Vec<_>>();
 
-    let mut engine = SpiralEngine::new();
+    let mut engine: Box<dyn Engine> = match args.engine.as_str() {
+        "spiral" => Box::new(SpiralEngine::new()),
+        "push-box" => Box::new(PushBoxEngine::new()),
+        _ => {
+            display_error(&mut rl, &thread, "Invalid engine specified.");
+            return;
+        }
+    };
     
     if !engine.initialize(&mut rl, &thread, image_paths) {
         display_error(&mut rl, &thread, "No slides were created successfully.");
