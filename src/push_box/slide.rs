@@ -1,3 +1,4 @@
+use rand::Rng;
 use raylib::prelude::*;
 use crate::constants::*;
 use crate::push_box::state::PushBoxState;
@@ -16,6 +17,15 @@ pub struct Slide {
     
     initial_scale: f32,
     final_scale: f32,
+
+    // Ken Burns effect parameters for Displaying state
+    ken_burns_pan_direction: i32,
+    ken_burns_pan: Vector2,
+    ken_burns_scale: f32,
+
+    tween_ken_burns_scale: ease::Tween,
+    tween_ken_burns_pan_x: ease::Tween,
+    tween_ken_burns_pan_y: ease::Tween,
 
     tween_entering: ease::Tween,
     tween_zooming_in: ease::Tween,
@@ -43,6 +53,17 @@ impl Slide {
         // Initial scale is half of final scale
         let initial_scale = final_scale * 0.5;
 
+        // Ken Burns effect parameters
+        
+        // Randomly choose a panning direction: left-to-right, right-to-left, top-to-bottom, or bottom-to-top
+        let ken_burns_pan_direction = rand::rng().random_range(0..4);        
+        let ken_burns_end_pos = match ken_burns_pan_direction {
+            0 => Vector2::new( 0.10, 0.0), // left-to-right
+            1 => Vector2::new(-0.10, 0.0), // right-to-left
+            2 => Vector2::new( 0.0,  0.10), // top-to-bottom
+            _ => Vector2::new( 0.0, -0.10), // bottom-to-top
+        };
+
         Self {
             image,
 
@@ -58,10 +79,19 @@ impl Slide {
             initial_scale,
             final_scale,
             
-            tween_entering: ease::Tween::new(ease::cubic_out, -0.5, 0.5, ANIMATION_DURATION),
-            tween_zooming_in: ease::Tween::new(ease::cubic_out, initial_scale, final_scale, ANIMATION_DURATION),
+            // Ken Burns effect initialization
+            ken_burns_pan_direction,
+            ken_burns_pan: Vector2::new(0.0, 0.0),
+            ken_burns_scale: 1.0,
+
+            tween_ken_burns_scale: ease::Tween::new(ease::linear_none, 1.0, 0.9, DISPLAY_DURATION),
+            tween_ken_burns_pan_x: ease::Tween::new(ease::linear_none, 0.0, ken_burns_end_pos.x, DISPLAY_DURATION),
+            tween_ken_burns_pan_y: ease::Tween::new(ease::linear_none, 0.0, ken_burns_end_pos.y, DISPLAY_DURATION),
+
+            tween_entering:    ease::Tween::new(ease::cubic_out, -0.5, 0.5, ANIMATION_DURATION),
+            tween_zooming_in:  ease::Tween::new(ease::cubic_out, initial_scale, final_scale, ANIMATION_DURATION),
             tween_zooming_out: ease::Tween::new(ease::cubic_out, final_scale, initial_scale, ANIMATION_DURATION),
-            tween_exiting: ease::Tween::new(ease::cubic_out, 0.5, 1.5, ANIMATION_DURATION),
+            tween_exiting:     ease::Tween::new(ease::cubic_out, 0.5, 1.5, ANIMATION_DURATION),
         }
     }
 
@@ -82,6 +112,11 @@ impl Slide {
             PushBoxState::Displaying => {
                 self.position = Vector2::new(0.5, 0.5);
                 self.scale = self.final_scale;
+
+                // Animate Ken Burns effect
+                self.ken_burns_scale = self.tween_ken_burns_scale.apply(dt);
+                self.ken_burns_pan.x = self.tween_ken_burns_pan_x.apply(dt);
+                self.ken_burns_pan.y = self.tween_ken_burns_pan_y.apply(dt);
             }
             PushBoxState::ZoomingOut => {
                 self.position = Vector2::new(0.5, 0.5);
@@ -94,10 +129,9 @@ impl Slide {
         }
 
         self.animation_timer += dt;
-        let expected_duration = if self.state == PushBoxState::Displaying {
-            DISPLAY_DURATION
-        } else {
-            ANIMATION_DURATION
+        let expected_duration = match self.state {
+            PushBoxState::Displaying => DISPLAY_DURATION,
+            _ => ANIMATION_DURATION,
         };
 
         if self.animation_timer >= expected_duration {
@@ -131,11 +165,31 @@ impl Slide {
                 screen_height * self.position.y - scaled_height * 0.5,
             );
 
-            let origin = Vector2::new(scaled_width / 2.0, scaled_height / 2.0);
+            // Relative to the dest rectangle (ie. the center of the image)
+            let origin = Vector2::new(scaled_width * 0.5, scaled_height * 0.5);
+
+            // Adjust source rectangle for Ken Burns effect during Displaying state
+            let source_rec = if self.state >= PushBoxState::Displaying {                                             
+                let scaled_ken_burns_width = tex_width * self.ken_burns_scale;
+                let scaled_ken_burns_height = tex_height * self.ken_burns_scale;
+
+                let pan_origin = match self.ken_burns_pan_direction {
+                    0 => Vector2::new(0.0,                                        (tex_height - scaled_ken_burns_height) * 0.5), // left-to-right
+                    1 => Vector2::new(tex_width - scaled_ken_burns_width,         (tex_height - scaled_ken_burns_height) * 0.5), // right-to-left
+                    2 => Vector2::new((tex_width - scaled_ken_burns_width) * 0.5, 0.0), // top-to-bottom
+                    _ => Vector2::new((tex_width - scaled_ken_burns_width) * 0.5, tex_height - scaled_ken_burns_height), // bottom-to-top
+                };
+
+                Rectangle::new(pan_origin.x + self.ken_burns_pan.x, pan_origin.y + self.ken_burns_pan.y, 
+                    scaled_ken_burns_width, scaled_ken_burns_height
+                )
+            } else {
+                Rectangle::new(0.0, 0.0, tex_width, tex_height)
+            };
 
             d.draw_texture_pro(
                 &self.image,
-                Rectangle::new(0.0, 0.0, tex_width, tex_height), // Source rect uses original texture size
+                source_rec, // Adjust source rectangle for Ken Burns effect
                 Rectangle::new(draw_pos.x + origin.x, draw_pos.y + origin.y, scaled_width, scaled_height), // Dest rect uses scaled size
                 origin,
                 0.0,
@@ -144,4 +198,3 @@ impl Slide {
         }
     }
 }
-    
