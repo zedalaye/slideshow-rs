@@ -66,9 +66,6 @@ impl Slide {
         let image_size   = image.width().max(image.height()) as f32;
         let base_scale   = subject_size / image_size;
 
-        // Base scale is clamped between 0.7 and 1.0
-        let ken_burns_scale = (base_scale * 0.5 + 0.5).clamp(0.7, 1.0);
-
         // Calculate the center of the bounding rectangle
         let subject_center = Vector2::new(
             subject_rect.x + subject_rect.width / 2.0,
@@ -80,6 +77,11 @@ impl Slide {
             subject_center.x - (image.width() as f32 / 2.0),
             subject_center.y - (image.height() as f32 / 2.0),
         );
+
+        let pan_distance = (ken_burns_end_pos.x.abs().max(ken_burns_end_pos.y.abs())).max(1.0);
+        let pan_factor   = pan_distance / image_size;
+        // Base scale is clamped between 0.8 and 1.0
+        let ken_burns_scale = (base_scale + pan_factor * 0.7).clamp(0.8,1.0);
 
         // println!("ken_burns_scale: {}", ken_burns_scale);
         // println!("ken_burns_end_pos: ({}, {})", ken_burns_end_pos.x, ken_burns_end_pos.y);
@@ -198,9 +200,11 @@ impl Slide {
                     (tex_height - scaled_ken_burns_height) * 0.5
                 );
 
-                Rectangle::new(pan_origin.x + self.ken_burns_pan.x, pan_origin.y + self.ken_burns_pan.y, 
-                    scaled_ken_burns_width, scaled_ken_burns_height
-                )
+                // Appliquer le panoramique avec des bornes pour rester dans l'image
+                let x = (pan_origin.x + self.ken_burns_pan.x).clamp(0.0, tex_width - scaled_ken_burns_width);
+                let y = (pan_origin.y + self.ken_burns_pan.y).clamp(0.0, tex_height - scaled_ken_burns_height);
+
+                Rectangle::new(x, y, scaled_ken_burns_width, scaled_ken_burns_height)
             } else {
                 Rectangle::new(0.0, 0.0, tex_width, tex_height)
             };
