@@ -8,3 +8,7 @@ clap = { version = "4.5.37", features = ["derive"] }
 kamadak-exif = "0.6.1"
 rand = "0.9.1"
 raylib = "5.5.1"
+usls = { git = "https://github.com/jamjamjon/usls" }
+anyhow = "1.0.98"
+
+# opencv = { version = "0.94.4", features = ["clang-runtime"] }

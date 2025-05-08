@@ -5,6 +5,7 @@ use clap::Parser;
 
 mod constants;
 mod texture_loader;
+mod subject_detection;
 mod ffmpeg;
 mod engine;
 
