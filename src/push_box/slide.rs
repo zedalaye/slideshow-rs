@@ -1,4 +1,3 @@
-use rand::Rng;
 use raylib::prelude::*;
 use crate::constants::*;
 use crate::push_box::state::PushBoxState;
@@ -12,30 +11,30 @@ pub struct Slide {
     pub is_animating: bool,
     animation_timer: f32,
 
+    initial_scale: f32, // how the image appears from the left
+    final_scale: f32,   // scale factor to fit the screen
+
+    // Current values during animation, those are computed by Tweens below
     position: Vector2,
     scale: f32,
     
-    initial_scale: f32,
-    final_scale: f32,
-
-    // Ken Burns effect parameters for Displaying state
-    ken_burns_pan_direction: i32,
-    ken_burns_pan: Vector2,
-    ken_burns_scale: f32,
-
-    tween_ken_burns_scale: ease::Tween,
-    tween_ken_burns_pan_x: ease::Tween,
-    tween_ken_burns_pan_y: ease::Tween,
-
     tween_entering: ease::Tween,
     tween_zooming_in: ease::Tween,
     tween_zooming_out: ease::Tween,
     tween_exiting: ease::Tween,
+    
+    // Ken Burns effect parameters for Displaying state, those are computed by Tweens below
+    ken_burns_scale: f32,
+    ken_burns_pan: Vector2,
+
+    tween_ken_burns_scale: ease::Tween,
+    tween_ken_burns_pan_x: ease::Tween,
+    tween_ken_burns_pan_y: ease::Tween,
 }
 
 impl Slide {
-    pub fn new(image: Texture2D) -> Self {
-        // Scale too big images to fit the screen
+    pub fn new(image: Texture2D, subject_rect: Rectangle) -> Self {
+        // Scale images too big to fit the screen
         let final_scale = if image.width() > image.height() {
             if image.width() as f32 > RENDER_WIDTH as f32 * 0.9 {
                 (RENDER_WIDTH as f32 * 0.9) / image.width() as f32
@@ -53,16 +52,37 @@ impl Slide {
         // Initial scale is half of final scale
         let initial_scale = final_scale * 0.5;
 
-        // Ken Burns effect parameters
-        
-        // Randomly choose a panning direction: left-to-right, right-to-left, top-to-bottom, or bottom-to-top
-        let ken_burns_pan_direction = rand::rng().random_range(0..4);        
-        let ken_burns_end_pos = match ken_burns_pan_direction {
-            0 => Vector2::new( 0.10, 0.0), // left-to-right
-            1 => Vector2::new(-0.10, 0.0), // right-to-left
-            2 => Vector2::new( 0.0,  0.10), // top-to-bottom
-            _ => Vector2::new( 0.0, -0.10), // bottom-to-top
-        };
+        /* Ken Burns effect parameters */
+
+        // If no subject rect, use the whole image
+        let subject_rect = if subject_rect.width == 0.0 || subject_rect.height == 0.0 {
+            Rectangle::new(0.0, 0.0, image.width() as f32, image.height() as f32)
+        } else {
+            subject_rect
+        };  
+
+        // Zoom-in to subject rect
+        let subject_size = subject_rect.width.max(subject_rect.height) as f32;
+        let image_size   = image.width().max(image.height()) as f32;
+        let base_scale   = subject_size / image_size;
+
+        // Base scale is clamped between 0.7 and 1.0
+        let ken_burns_scale = (base_scale * 0.5 + 0.5).clamp(0.7, 1.0);
+
+        // Calculate the center of the bounding rectangle
+        let subject_center = Vector2::new(
+            subject_rect.x + subject_rect.width / 2.0,
+            subject_rect.y + subject_rect.height / 2.0,
+        );
+
+        // Define the final position of the move (in pixels, relative to the image)
+        let ken_burns_end_pos = Vector2::new(
+            subject_center.x - (image.width() as f32 / 2.0),
+            subject_center.y - (image.height() as f32 / 2.0),
+        );
+
+        // println!("ken_burns_scale: {}", ken_burns_scale);
+        // println!("ken_burns_end_pos: ({}, {})", ken_burns_end_pos.x, ken_burns_end_pos.y);
 
         Self {
             image,
@@ -72,26 +92,26 @@ impl Slide {
 
             is_animating: false,
             animation_timer: 0.0,
-        
-            position: Vector2::new(-0.5, 0.5),            
-            scale: initial_scale,
 
             initial_scale,
             final_scale,
-            
-            // Ken Burns effect initialization
-            ken_burns_pan_direction,
-            ken_burns_pan: Vector2::new(0.0, 0.0),
-            ken_burns_scale: 1.0,
 
-            tween_ken_burns_scale: ease::Tween::new(ease::linear_none, 1.0, 0.9, DISPLAY_DURATION),
-            tween_ken_burns_pan_x: ease::Tween::new(ease::linear_none, 0.0, ken_burns_end_pos.x, DISPLAY_DURATION),
-            tween_ken_burns_pan_y: ease::Tween::new(ease::linear_none, 0.0, ken_burns_end_pos.y, DISPLAY_DURATION),
+            // Initial position is outside the left of the screen
+            position: Vector2::new(-0.5, 0.5),            
+            scale: initial_scale,
 
             tween_entering:    ease::Tween::new(ease::cubic_out, -0.5, 0.5, ANIMATION_DURATION),
             tween_zooming_in:  ease::Tween::new(ease::cubic_out, initial_scale, final_scale, ANIMATION_DURATION),
             tween_zooming_out: ease::Tween::new(ease::cubic_out, final_scale, initial_scale, ANIMATION_DURATION),
             tween_exiting:     ease::Tween::new(ease::cubic_out, 0.5, 1.5, ANIMATION_DURATION),
+            
+            // Ken Burns effect initialization
+            ken_burns_scale: 1.0,
+            ken_burns_pan: Vector2::new(0.0, 0.0),
+            
+            tween_ken_burns_scale: ease::Tween::new(ease::linear_none, 1.0, ken_burns_scale, DISPLAY_DURATION),
+            tween_ken_burns_pan_x: ease::Tween::new(ease::linear_none, 0.0, ken_burns_end_pos.x, DISPLAY_DURATION),
+            tween_ken_burns_pan_y: ease::Tween::new(ease::linear_none, 0.0, ken_burns_end_pos.y, DISPLAY_DURATION),           
         }
     }
 
@@ -149,7 +169,7 @@ impl Slide {
         }        
     }
 
-    pub fn draw(&self, d: &mut RaylibDrawHandle) {
+    pub fn draw(&self, d: &mut RaylibDrawHandle) {        
         if self.visible {
             let screen_width = RENDER_WIDTH as f32;
             let screen_height = RENDER_HEIGHT as f32;
@@ -173,12 +193,10 @@ impl Slide {
                 let scaled_ken_burns_width = tex_width * self.ken_burns_scale;
                 let scaled_ken_burns_height = tex_height * self.ken_burns_scale;
 
-                let pan_origin = match self.ken_burns_pan_direction {
-                    0 => Vector2::new(0.0,                                        (tex_height - scaled_ken_burns_height) * 0.5), // left-to-right
-                    1 => Vector2::new(tex_width - scaled_ken_burns_width,         (tex_height - scaled_ken_burns_height) * 0.5), // right-to-left
-                    2 => Vector2::new((tex_width - scaled_ken_burns_width) * 0.5, 0.0), // top-to-bottom
-                    _ => Vector2::new((tex_width - scaled_ken_burns_width) * 0.5, tex_height - scaled_ken_burns_height), // bottom-to-top
-                };
+                let pan_origin = Vector2::new(
+                    (tex_width - scaled_ken_burns_width) * 0.5,
+                    (tex_height - scaled_ken_burns_height) * 0.5
+                );
 
                 Rectangle::new(pan_origin.x + self.ken_burns_pan.x, pan_origin.y + self.ken_burns_pan.y, 
                     scaled_ken_burns_width, scaled_ken_burns_height
@@ -189,8 +207,8 @@ impl Slide {
 
             d.draw_texture_pro(
                 &self.image,
-                source_rec, // Adjust source rectangle for Ken Burns effect
-                Rectangle::new(draw_pos.x + origin.x, draw_pos.y + origin.y, scaled_width, scaled_height), // Dest rect uses scaled size
+                source_rec,
+                Rectangle::new(draw_pos.x + origin.x, draw_pos.y + origin.y, scaled_width, scaled_height),
                 origin,
                 0.0,
                 Color::WHITE,
